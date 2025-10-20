@@ -1,6 +1,4 @@
 streamlit
+pandas
 numpy
-pandpd
-math
-plotly.graph_objects
-plotly.express
+plotly
