@@ -1,4 +1,4 @@
-# Importar librerías
+# Import necessary libraries
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -6,64 +6,55 @@ import math
 import plotly.graph_objects as go
 import plotly.express as px
 
-# --- Configuración de la página ---
+# --- Page Configuration ---
 st.set_page_config(
-    page_title="Herramienta de Viabilidad Eólica (Asignación)",
+    page_title="Wind Energy Viability Tool (Assignment)",
     page_icon="🌬️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- Constantes y Mapeos Ilustrativos ---
-# Simplificaciones para los cálculos.
-COST_MULTIPLIER_CAPEX = 1500.0  # CAPEX base estimado (€/kW)
-COST_MULTIPLIER_OPEX = 50.0     # OPEX base estimado (€/kW/año)
-HOURS_PER_YEAR = 8760           # Horas en un año
+# --- Constants and Estimates ---
+COST_MULTIPLIER_CAPEX = 1500.0  # Base CAPEX estimate (€/kW)
+COST_MULTIPLIER_OPEX = 50.0     # Base OPEX estimate (€/kW/year)
+HOURS_PER_YEAR = 8760           # Hours in a year
 
-# --- Funciones de Cálculo para la Asignación ---
+# --- Core Calculation Functions ---
 
 def calculate_FCR(interest_rate, project_life):
     """
-    Paso 3: Calcula el Factor de Recuperación de Capital (FCR), simplificando el costo financiero.
+    Step 3: Calculates the Capital Recovery Factor (FCR).
     FCR = [i * (1 + i)^N] / [(1 + i)^N - 1]
     """
     i = interest_rate / 100
-    if i == 0:
-        return 1 / project_life
+    if i <= 0:
+        return 1 / project_life if project_life > 0 else 0
     
-    # Asume un valor si el denominador es 0, aunque es poco probable con i > 0
-    if (1 + i)**project_life - 1 == 0:
+    # Use numpy to avoid potential OverflowError with large exponents
+    try:
+        fcr = (i * np.power(1 + i, project_life)) / (np.power(1 + i, project_life) - 1)
+        return fcr
+    except Exception:
         return 1.0 
-        
-    return (i * (1 + i)**project_life) / ((1 + i)**project_life - 1)
 
-def estimate_AEP(P_rated_MW, V_avg_m_s, P_rated_kW):
+def estimate_AEP(P_rated_MW, V_avg_m_s):
     """
-    Paso 2: Estima la Producción Anual de Energía (AEP) y el Factor de Capacidad (CF).
-    Utiliza una función heurística simple para el Factor de Capacidad (CF) basada en V_avg.
-    AEP (MWh) = P_rated (MW) * Horas/Año * CF
+    Step 2: Estimates Annual Energy Production (AEP) and Capacity Factor (CF).
+    A simple heuristic model for CF based on average wind speed (V_avg) is used.
+    AEP (MWh) = P_rated (MW) * Hours/Year * CF
     """
-    # Modelo heurístico simple para CF (ejemplo: 6 m/s -> CF ~0.3; 9 m/s -> CF ~0.5)
-    # Penaliza velocidades bajas y se satura a velocidades altas.
+    # Heuristic CF Model: Penalizes low speeds, caps at ~55%
     CF = 0.006 * (V_avg_m_s**2) + 0.01 * V_avg_m_s + 0.1
-    CF = max(0.1, min(0.55, CF)) # Limitar CF entre 10% y 55%
+    CF = max(0.1, min(0.55, CF)) 
 
     AEP_MWh = P_rated_MW * HOURS_PER_YEAR * CF
-    
-    # Cálculo de la Potencia Teórica Máxima (Ley de Betz) para comparación
-    # Aunque no se usa en AEP, es útil para el análisis.
-    # Área del rotor (m²)
-    # rotor_area = math.pi * (rotor_diameter_m / 2)**2
-    # P_max_theoretical_kW = 0.5 * air_density * rotor_area * (V_avg_m_s**3) * 0.593 / 1000
-    
-    # AEP (GWh)
     AEP_GWh = AEP_MWh / 1000
     
     return AEP_MWh, AEP_GWh, CF
 
 def calculate_LCOE(CAPEX_total, OPEX_annual, AEP_MWh, FCR):
     """
-    Paso 3: Calcula el Coste Nivelado de la Energía (LCOE) en €/MWh.
+    Step 3: Calculates the Levelized Cost of Energy (LCOE) in €/MWh.
     LCOE = [FCR * CAPEX_total + OPEX_annual] / AEP_MWh
     """
     if AEP_MWh <= 0:
@@ -72,53 +63,56 @@ def calculate_LCOE(CAPEX_total, OPEX_annual, AEP_MWh, FCR):
     LCOE = (FCR * CAPEX_total + OPEX_annual) / AEP_MWh
     return LCOE
 
-# --- BARRA LATERAL (INPUTS DE LA ASIGNACIÓN) ---
-st.sidebar.title('⚙️ Parámetros del Proyecto Eólico')
+# ----------------------------------------------------
+# --- SIDEBAR (INPUTS) ---
+# ----------------------------------------------------
+
+st.sidebar.title('⚙️ Wind Project Parameters')
 
 # ----------------------------------------------------
-# PASO 1: Emplazamiento y Recurso Eólico (Recurso)
+# STEP 1: Site and Wind Resource
 # ----------------------------------------------------
-st.sidebar.header('1. Recurso Eólico (Ubicación)')
-location = st.sidebar.text_input('Ubicación (Ej: Tarifa, España)', 'Tarifa, Spain')
-V_avg_m_s = st.sidebar.slider('Velocidad Media del Viento ($V_{avg}$ en m/s)', 4.0, 12.0, 7.5, 0.1, help="Dato clave del Atlas Eólico a la altura del buje.")
-hub_height_m = st.sidebar.slider('Altura del Buje (Hub Height en m)', 60, 160, 120, 5, help="Altura del centro del rotor sobre el suelo.")
-# air_density = st.sidebar.number_input('Densidad del Aire (kg/m³)', value=1.225, step=0.005)
+st.sidebar.header('1. Wind Resource (Location & V_avg)')
+# This text input serves as the location selector (API implementation is not needed for the core calculation)
+location = st.sidebar.text_input('Location Name', 'Tarifa, Spain') 
+# THE CRUCIAL INPUT for Step 1 & 2
+V_avg_m_s = st.sidebar.slider('Average Wind Speed ($V_{avg}$ in m/s)', 4.0, 12.0, 7.5, 0.1, help="Look up this value from a wind atlas for your chosen location and hub height.")
+hub_height_m = st.sidebar.slider('Hub Height (m)', 60, 160, 120, 5)
 
 # ----------------------------------------------------
-# PASO 2: Especificaciones de la Turbina (Energía)
+# STEP 2: Turbine Specifications
 # ----------------------------------------------------
-st.sidebar.header('2. Características de la Turbina')
-P_rated_MW = st.sidebar.number_input('Potencia Nominal ($P_{rated}$ en MW)', min_value=1.0, max_value=10.0, value=3.0, step=0.1, help="Potencia máxima del generador.")
-rotor_diameter_m = st.sidebar.slider('Diámetro del Rotor (D en m)', 80, 200, 130, 5, help="Determina el área de captación del viento.")
+st.sidebar.header('2. Turbine Characteristics (Energy)')
+P_rated_MW = st.sidebar.number_input('Rated Power ($P_{rated}$ in MW)', min_value=1.0, max_value=10.0, value=3.0, step=0.1)
+rotor_diameter_m = st.sidebar.slider('Rotor Diameter (m)', 80, 200, 130, 5)
 
 # ----------------------------------------------------
-# PASO 3: Costes y Finanzas (Costos)
+# STEP 3: Costs and Finance (LCOE)
 # ----------------------------------------------------
-st.sidebar.header('3. Costes y Finanzas (LCOE)')
-capex_per_kW = st.sidebar.number_input('CAPEX Específico (€/kW)', value=COST_MULTIPLIER_CAPEX, step=50.0, help="Costo de inversión inicial por kW instalado (Turbina + BOS + Otros).")
-opex_per_kW_yr = st.sidebar.number_input('OPEX Específico (€/kW/año)', value=COST_MULTIPLIER_OPEX, step=5.0, help="Costo Operacional y de Mantenimiento por kW por año.")
-project_life_years = st.sidebar.slider('Vida Útil del Proyecto (Años)', 15, 30, 25, 1)
-interest_rate = st.sidebar.slider('Tasa de Interés Anual Nominal (%)', 1.0, 10.0, 5.0, 0.5, help="Costo financiero para calcular el FCR.")
+st.sidebar.header('3. Costs and Finance (LCOE)')
+capex_per_kW = st.sidebar.number_input('CAPEX Specific (€/kW)', value=COST_MULTIPLIER_CAPEX, step=50.0, help="Initial investment cost per kW installed.")
+opex_per_kW_yr = st.sidebar.number_input('OPEX Specific (€/kW/year)', value=COST_MULTIPLIER_OPEX, step=5.0, help="Annual O&M cost per kW.")
+project_life_years = st.sidebar.slider('Project Lifetime (Years)', 15, 30, 25, 1)
+interest_rate = st.sidebar.slider('Nominal Annual Interest Rate (%)', 1.0, 10.0, 5.0, 0.5, help="Financial cost for calculating the FCR.")
 
 # ----------------------------------------------------
-# PASO 4: Viabilidad Económica (Mercado)
+# STEP 4: Economic Viability (Market)
 # ----------------------------------------------------
-st.sidebar.header('4. Mercado y Viabilidad')
-market_price_MWh = st.sidebar.number_input('Precio de Venta en Mercado (€/MWh)', min_value=20.0, max_value=150.0, value=65.0, step=1.0, help="Precio de la electricidad de OMIE o equivalente.")
+st.sidebar.header('4. Market and Viability')
+market_price_MWh = st.sidebar.number_input('Market Selling Price (€/MWh)', min_value=20.0, max_value=150.0, value=65.0, step=1.0)
 
 st.sidebar.markdown("---")
 
 # ----------------------------------------------------
-# --- LÓGICA DE CÁLCULO CENTRAL ---
+# --- CENTRAL CALCULATION LOGIC ---
 # ----------------------------------------------------
 
-# Preparación
 P_rated_kW = P_rated_MW * 1000
 
-# 1. & 2. CÁLCULO DE AEP
-AEP_MWh, AEP_GWh, CF = estimate_AEP(P_rated_MW, V_avg_m_s, P_rated_kW)
+# 1. & 2. AEP Calculation
+AEP_MWh, AEP_GWh, CF = estimate_AEP(P_rated_MW, V_avg_m_s)
 
-# 3. CÁLCULO DE COSTOS
+# 3. Cost Calculation (CAPEX, OPEX, FCR)
 CAPEX_total = P_rated_kW * capex_per_kW
 OPEX_annual = P_rated_kW * opex_per_kW_yr
 FCR = calculate_FCR(interest_rate, project_life_years)
@@ -128,7 +122,7 @@ if AEP_MWh > 0:
 else:
     LCOE = float('inf')
 
-# 4. ANÁLISIS DE VIABILIDAD
+# 4. Viability Analysis
 annual_income = AEP_MWh * market_price_MWh
 annual_cost = FCR * CAPEX_total + OPEX_annual
 profit_loss = annual_income - annual_cost
@@ -137,96 +131,92 @@ subsidy_needed_MWh = max(0, LCOE - market_price_MWh)
 subsidy_total_annual = subsidy_needed_MWh * AEP_MWh
 
 # ----------------------------------------------------
-# --- DASHBOARD (RESULTADOS) ---
+# --- DASHBOARD (RESULTS) ---
 # ----------------------------------------------------
 
-st.title("🌱 Análisis de Viabilidad Económica Eólica")
-st.subheader(f"Proyecto de {P_rated_MW:.1f} MW en {location}")
+st.title("🌱 Wind Farm Economic Viability Analysis")
+st.subheader(f"Project: {P_rated_MW:.1f} MW at {location}")
 st.markdown("---")
 
-# ----------------------------------------
-# KPIs Globales (Pasos 2, 3 y 4)
-# ----------------------------------------
-st.header("Resultados Globales de Viabilidad")
+# Global KPIs (Steps 2, 3, and 4)
+st.header("Global Economic Indicators")
 
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+kpi1, kpi2, kpi3 = st.columns(3)
 
-# KPI 1: LCOE (Paso 3)
+# KPI 1: LCOE (Step 3)
 kpi1.metric(
-    "LCOE (Coste Nivelado de la Energía)",
+    "LCOE (Levelized Cost of Energy)",
     f"€ {LCOE:,.2f} /MWh",
-    f" vs Mercado: € {market_price_MWh:,.2f}",
+    f" vs Market: € {market_price_MWh:,.2f}",
     delta_color="off" if is_viable else "inverse"
 )
 
-# KPI 2: AEP (Paso 2)
-kpi2.metric("Producción Anual de Energía (AEP)", f"{AEP_GWh:,.1f} GWh")
+# KPI 2: AEP (Step 2)
+kpi2.metric("Annual Energy Production (AEP)", f"{AEP_GWh:,.1f} GWh")
 
-# KPI 3: Beneficio/Pérdida Anual (Paso 4)
+# KPI 3: Annual Profit/Loss (Step 4)
 profit_color = "inverse" if profit_loss < 0 else "normal"
-kpi3.metric("Beneficio / Pérdida Anual", f"€ {profit_loss:,.0f}", delta_color=profit_color)
+kpi3.metric("Annual Profit / Loss", f"€ {profit_loss:,.0f}", delta_color=profit_color)
 
-# KPI 4: Viabilidad (Paso 4)
-viability_status = "VIABLE" if is_viable else "NO VIABLE"
+# Viability Status (Step 4)
+viability_status = "VIABLE" if is_viable else "NOT VIABLE"
 st.markdown(f"""
-<div style="border: 2px solid {'green' if is_viable else 'red'}; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold; margin-bottom: 20px;">
-    ESTADO ECONÓMICO: {viability_status}
+<div style="border: 2px solid {'green' if is_viable else 'red'}; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold; margin-bottom: 20px; font-size: 20px;">
+    ECONOMIC STATUS: {viability_status}
 </div>
 """, unsafe_allow_html=True)
 st.markdown("---")
 
-# ----------------------------------------
-# Desglose Detallado por Pasos
-# ----------------------------------------
-
+# Detailed Breakdown
 col_steps, col_charts = st.columns([1, 1], gap="large")
 
 with col_steps:
-    st.subheader("Desglose del Análisis (Pasos 1-4)")
+    st.subheader("Analysis Breakdown (Steps 1-4)")
     
-    # Detalle del Paso 1 & 2
-    st.markdown("### 🗺️ Paso 1 & 2: Recurso y Energía (AEP)")
-    st.markdown(f"**Ubicación:** `{location}`")
-    st.metric("Velocidad Media del Viento", f"{V_avg_m_s} m/s", help="Dato utilizado para la estimación de rendimiento.")
-    st.metric("Factor de Capacidad (CF)", f"{CF * 100:.1f} %", help="Fracción de la potencia máxima que se produce en un año.")
-    st.metric("Potencia Nominal", f"{P_rated_MW:.1f} MW")
+    # Detail for Step 1 & 2
+    st.markdown("### 🗺️ Step 1 & 2: Resource and Energy")
+    st.markdown(f"**Location:** `{location}`")
+    st.metric("Average Wind Speed", f"{V_avg_m_s} m/s", help="Key input from wind atlas.")
+    st.metric("Capacity Factor (CF)", f"{CF * 100:.1f} %")
+    st.metric("Rated Power", f"{P_rated_MW:.1f} MW")
 
-    # Detalle del Paso 3
-    st.markdown("### 💰 Paso 3: Costos y LCOE")
+    # Detail for Step 3
+    st.markdown("### 💰 Step 3: Costs and LCOE")
     
-    # Creación de DataFrame para la tabla de costos
+    # DataFrame for Cost Table
     cost_data = {
-        'CAPEX Total (Inversión Inicial)': CAPEX_total,
-        'OPEX Anual (Operación)': OPEX_annual,
-        'Costo Financiero Anual (FCR * CAPEX)': FCR * CAPEX_total
+        'CAPEX Total (Initial Investment)': CAPEX_total,
+        'OPEX Annual (Operations)': OPEX_annual,
+        'Annual Financial Cost (FCR * CAPEX)': FCR * CAPEX_total
     }
-    df_costs = pd.DataFrame(cost_data.items(), columns=['Componente', 'Costo (€)'])
-    df_costs['Costo (€)'] = df_costs['Costo (€)'].round(0).map('{:,.0f}'.format)
+    df_costs = pd.DataFrame(cost_data.items(), columns=['Component', 'Cost (€)'])
+    df_costs['Cost (€)'] = df_costs['Cost (€)'].round(0).map('{:,.0f}'.format)
     
     st.dataframe(df_costs, use_container_width=True, hide_index=True)
-    st.metric("Factor de Recuperación de Capital (FCR)", f"{FCR * 100:.2f} %", help="Tasa anual que representa el retorno de la inversión y el costo del capital.")
-    st.metric("Costo Anual Total", f"€ {annual_cost:,.0f}", help="Costo anualizado de la inversión (CAPEX) + costos operativos (OPEX).")
+    st.metric("Capital Recovery Factor (FCR)", f"{FCR * 100:.2f} %")
+    st.metric("Total Annual Cost", f"€ {annual_cost:,.0f}")
 
-    # Detalle del Paso 4
-    st.markdown("### 💸 Paso 4: Viabilidad y Subsidio")
-    st.metric("Ingreso Anual Estimado", f"€ {annual_income:,.0f}")
+    # Detail for Step 4
+    st.markdown("### 💸 Step 4: Viability and Subsidy")
+    st.metric("Estimated Annual Income", f"€ {annual_income:,.0f}")
+    
     if not is_viable:
-        st.error(f"Se requiere un subsidio de € {subsidy_needed_MWh:,.2f} /MWh o € {subsidy_total_annual:,.0f} anuales para alcanzar la viabilidad.")
+        st.error(f"Subsidy required: € **{subsidy_needed_MWh:,.2f} /MWh** or € **{subsidy_total_annual:,.0f}** annually to break even.")
     else:
-        st.success("El proyecto es económicamente viable sin subsidios adicionales.")
+        st.success("The project is economically viable without additional subsidies.")
 
 with col_charts:
-    st.subheader("Visualización del Modelo Económico")
+    st.subheader("Economic Model Visualization")
     
-    # Gráfico de Viabilidad (Gauge/Comparación LCOE vs Precio)
+    # Gauge Chart: LCOE vs Market Price
     fig_gauge = go.Figure(go.Indicator(
         mode="gauge+number+delta",
         value=LCOE,
         domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': "LCOE vs. Precio de Mercado (€/MWh)"},
+        title={'text': "LCOE vs. Market Price (€/MWh)"},
         delta={'reference': market_price_MWh, 'increasing': {'color': "red"}, 'decreasing': {'color': "green"}},
         gauge={
-            'axis': {'range': [None, max(market_price_MWh * 1.5, LCOE * 1.2)], 'tickwidth': 1, 'tickcolor': "darkblue"},
+            'axis': {'range': [None, max(market_price_MWh * 1.5, LCOE * 1.2)]},
             'bar': {'color': "darkblue"},
             'steps': [
                 {'range': [0, market_price_MWh], 'color': "lightgreen"},
@@ -238,29 +228,16 @@ with col_charts:
     fig_gauge.update_layout(height=350, margin=dict(t=50, b=0, l=10, r=10))
     st.plotly_chart(fig_gauge, use_container_width=True)
     
-    # Gráfico de Desglose de Costo Anual
+    # Bar Chart: Annual Income vs Cost
     df_annual_breakdown = pd.DataFrame({
-        'Tipo': ['Ingreso Anual', 'Costo Anual'],
-        'Valor (€)': [annual_income, annual_cost]
+        'Type': ['Annual Income', 'Annual Cost'],
+        'Value (€)': [annual_income, annual_cost]
     })
 
-    fig_bar = px.bar(df_annual_breakdown, x='Tipo', y='Valor (€)', 
-                     color='Tipo', 
-                     title='Ingreso vs. Costo Anual Total',
-                     color_discrete_map={'Ingreso Anual': 'green', 'Costo Anual': 'red'})
+    fig_bar = px.bar(df_annual_breakdown, x='Type', y='Value (€)', 
+                     color='Type', 
+                     title='Annual Income vs. Annual Cost',
+                     color_discrete_map={'Annual Income': 'green', 'Annual Cost': 'red'})
     fig_bar.update_traces(marker_line_width=0)
     fig_bar.update_layout(showlegend=False)
     st.plotly_chart(fig_bar, use_container_width=True)
-
-# ----------------------------------------
-# Tareas de Asignación (Resumen de pasos)
-# ----------------------------------------
-st.markdown("---")
-st.subheader("Resumen de las Tareas de la Asignación")
-st.info("""
-Esta herramienta te permite cumplir con los 4 pasos clave de la asignación:
-1. **Elegir y Cuantificar el Recurso:** Seleccionas la ubicación (ej. Tarifa) y la **Velocidad Media del Viento ($V_{avg}$)** en la barra lateral.
-2. **Cuantificar la Energía (AEP):** El código calcula el **Factor de Capacidad (CF)** y la **Producción Anual de Energía (AEP)** en GWh/MWh.
-3. **Modelar y Calcular Costos (LCOE):** El código utiliza el **CAPEX** y **OPEX** específicos, junto con la **Tasa de Interés** y la **Vida Útil** para obtener el **LCOE**.
-4. **Analizar la Viabilidad Económica:** El código compara el **LCOE** con el **Precio de Venta en Mercado** para determinar el **Beneficio/Pérdida Anual** y el posible **Subsidio Necesario**.
-""")
