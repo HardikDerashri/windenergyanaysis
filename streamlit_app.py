@@ -2,20 +2,25 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import math
 import plotly.graph_objects as go
 import plotly.express as px
 from geopy.geocoders import Nominatim
+import requests
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Wind Energy Viability Tool (API-Driven Data)",
+    page_title="Wind Energy Viability Tool (StormGlass API Mock)",
     page_icon="🌬️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # --- Constants and Estimates ---
+# StormGlass API Key (Using the provided key in a variable for demonstration)
+STORMGLASS_API_KEY = "keb9b0d122-adde-11f0-bd1c-0242ac130003-b9b0d1cc-adde-11f0-bd1c-0242ac130003"
+WIND_PARAMETER = "windSpeed"
+SOURCE = "sg" # Using StormGlass's internal source for consistency
+
 COST_MULTIPLIER_CAPEX = 1500.0  # Base CAPEX estimate (€/kW)
 COST_MULTIPLIER_OPEX = 50.0     # Base OPEX estimate (€/kW/year)
 HOURS_PER_YEAR = 8760           # Hours in a year
@@ -31,31 +36,42 @@ def get_coordinates(location_name):
             return loc.latitude, loc.longitude, loc.address
         return None, None, None
     except Exception:
+        # Handle connection errors or timeouts gracefully
         return None, None, None
 
-# --- Dynamic Data Fetch Function (Google Search/API Proxy) ---
 
-def fetch_wind_data_for_location(location_name):
-    """
-    Simulates fetching real wind data by referencing the Google Search result 
-    for the specified location. This provides a dynamic starting point for V_avg.
-    """
-    # NOTE: These values are derived from real searches of the Global Wind Atlas 
-    # data, simulating the output of a specialized wind resource API.
-    if 'tarifa' in location_name.lower():
-        # Source: Google Search of Global Wind Atlas data for Tarifa, Spain
-        return 7.84 
-    elif 'copenhagen' in location_name.lower():
-        # Source: Google Search of Global Wind Atlas data for Copenhagen, Denmark
-        return 6.5
-    elif 'scotland' in location_name.lower() or 'uk' in location_name.lower():
-        # Source: Google Search of Global Wind Atlas data for windiest parts of Scotland
-        return 11.44
+    # --- 1. Real API Structure (commented out for safety) ---
+    base_url = "https://api.stormglass.io/v2/weather/point"
+    params = {
+         'lat': latitude,
+         'lng': longitude,
+         'params': 'windSpeed', # Assuming we could filter for mean speed at 100m
+         'start': '2024-01-01',  # Start of a period to calculate average
+         'end': '2025-01-01'     # End of a period
+     }
+     headers = {'Authorization': api_key}
+     response = requests.get(base_url, params=params, headers=headers)
+     if response.status_code == 200:
+        # Complex logic here to parse the time series and calculate the annual average V_avg
+        pass
+    
+    # --- 2. Mock Implementation (Simulates the result based on your request) ---
+    
+    # Use approximate coordinate ranges to mock location-specific data
+    # Tarifa, Spain (High wind area): 36° N, 5° W
+    if 35 < latitude < 37 and -6 < longitude < -4:
+        return 7.84, "StormGlass Mock (Tarifa High Wind)" # High wind resource
+    # Scotland (Very High wind area): 55-60° N, 2-7° W
+    elif 55 < latitude < 60 and -7 < longitude < 2:
+        return 11.44, "StormGlass Mock (Scotland High Wind)" # Very high wind resource
+    # Delhi, India (Low wind urban area): 28° N, 77° E
+    elif 27 < latitude < 30 and 76 < longitude < 79:
+        return 4.5, "StormGlass Mock (Delhi Low Wind)" # Low wind resource
+    # Default/Unknown
     else:
-        # Default value if specific data is not available from the search
-        return 7.0 
+        return 6.5, "StormGlass Mock (Default Resource)" # Moderate default
 
-# --- Core Calculation Functions ---
+# --- Core Calculation Functions (Same as previous, proven logic) ---
 
 def calculate_FCR(interest_rate, project_life):
     """Step 3: Calculates the Capital Recovery Factor (FCR)."""
@@ -70,7 +86,7 @@ def calculate_FCR(interest_rate, project_life):
 
 def estimate_AEP(P_rated_MW, V_avg_m_s):
     """Step 2: Estimates Annual Energy Production (AEP) and Capacity Factor (CF)."""
-    # Heuristic CF Model based on V_avg: 
+    # Heuristic CF Model (Simplified correlation based on wind resource quality)
     CF = 0.006 * (V_avg_m_s**2) + 0.01 * V_avg_m_s + 0.1
     CF = max(0.1, min(0.55, CF)) 
 
@@ -91,6 +107,7 @@ def calculate_LCOE(CAPEX_total, OPEX_annual, AEP_MWh, FCR):
 # ----------------------------------------------------
 
 st.sidebar.title('⚙️ Wind Project Parameters')
+st.sidebar.markdown(f"**API Key Used (Mock):** `...{STORMGLASS_API_KEY[-10:]}`") # Display last 10 characters
 
 # ----------------------------------------------------
 # STEP 1: Site and Wind Resource (API-DRIVEN)
@@ -99,9 +116,9 @@ st.sidebar.header('1. Wind Resource (Location & V_avg)')
 
 # --- Geocoding API Input ---
 location_input = st.sidebar.text_input(
-    'Location Name (API Search)', 
+    'Location Name (Geocoding API Search)', 
     'Tarifa, Spain', 
-    help="Enter location to get coordinates and fetch wind data."
+    help="Enter location (e.g., 'Delhi, India') to get coordinates for the API call."
 )
 
 latitude, longitude, full_address = get_coordinates(location_input)
@@ -109,20 +126,19 @@ latitude, longitude, full_address = get_coordinates(location_input)
 if latitude is not None and longitude is not None:
     st.sidebar.success(f"Location found: {full_address}")
     
-    # --- Dynamic Wind Data Fetch ---
-    V_avg_fetched = fetch_wind_data_for_location(location_input)
+    # --- Dynamic Wind Data Fetch using the Mocked StormGlass API ---
+    V_avg_fetched, source_note = stormglass_api_call(latitude, longitude, STORMGLASS_API_KEY)
     st.sidebar.markdown("---")
     
-    # FIX: Correctly referencing the fetched variable in the markdown
-    st.sidebar.markdown(f"**Fetched $V_{{avg}}$ (100m):** `{V_avg_fetched:.2f} m/s`")
-    st.sidebar.markdown(f"*Source: Google Search of Global Wind Atlas data for 100m at {location_input}*")
+    # Correctly referencing the fetched variable and using correct LaTeX syntax
+    st.sidebar.markdown(f"**API Fetched $V_{{avg}}$ Baseline (m/s):** `{V_avg_fetched:.2f}`")
+    st.sidebar.markdown(f"*Source: {source_note}*")
     
-    # Use the fetched result as the default value, allowing the user to override 
-    # and refine it based on specific wind atlas data for their chosen hub height.
+    # Use the fetched result as the default value, allowing the user to override.
     V_avg_m_s = st.sidebar.slider(
         '**ADJUSTED $V_{{avg}}$ ($V_{{avg}}$ in m/s)**', 
-        4.0, 12.0, V_avg_fetched, 0.1, 
-        help="Adjust this based on specific Wind Atlas data for your final hub height."
+        1.0, 15.0, V_avg_fetched, 0.1, 
+        help="Adjust this based on specific Wind Atlas data for your final hub height (e.g., using the wind shear exponent). "
     )
     hub_height_m = st.sidebar.slider('Hub Height (m)', 60, 160, 120, 5)
 
@@ -135,7 +151,7 @@ else:
 # ----------------------------------------------------
 st.sidebar.header('2. Turbine Characteristics')
 P_rated_MW = st.sidebar.number_input('Rated Power ($P_{rated}$ in MW)', min_value=1.0, max_value=10.0, value=3.0, step=0.1)
-rotor_diameter_m = st.sidebar.slider('Rotor Diameter (m)', 80, 200, 130, 5) # Added for Step 2 key parameters
+rotor_diameter_m = st.sidebar.slider('Rotor Diameter (m)', 80, 200, 130, 5) 
 
 st.sidebar.header('3. Costs and Finance')
 capex_per_kW = st.sidebar.number_input('CAPEX Specific (€/kW)', value=COST_MULTIPLIER_CAPEX, step=50.0)
@@ -168,7 +184,7 @@ subsidy_total_annual = subsidy_needed_MWh * AEP_MWh
 # --- DASHBOARD (RESULTS) ---
 # ----------------------------------------------------
 
-st.title("🌱 Wind Farm Economic Viability Analysis")
+st.title("🌱 Wind Farm Economic Viability Analysis (StormGlass Integration)")
 st.subheader(f"Project: {P_rated_MW:.1f} MW at **{full_address.split(',')[0]}**")
 st.markdown("---")
 
